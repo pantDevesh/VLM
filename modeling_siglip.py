@@ -49,8 +49,35 @@ class SiglipVisionEmbeddings(nn.Module):
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
-        # to be continued ...
+        self.image_size = config.image_size
+        self.patch_size = config.patch_size
 
+        self.patch_embed = nn.Conv2d(
+            in_channels=config.num_channels,
+            out_channels=self.embed_dim,
+            kernel_size=self.patch_size,
+            stride=self.patch_size,
+            padding="valid"
+        )
+        
+        self.num_patches = (self.image_size // self.patch_size) ** 2
+        self.num_positions = self.num_patches
+        self.postition_embeddings = nn.Embedding(self.num_positions, self.embed_dim)
+        
+        self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)),
+                                persistent=False)
+         
+    def forward(self, pixel_values):
+        _, _, height, width = pixel_values.shape
+        
+        patch_embeds = self.patch_embed(pixel_values) # [Batch_size, hidden_size, num_patches, num_patches]
+        patch_embeds = patch_embeds.flatten(2).transpose(1, 2) # [Batch_size, num_patches, hidden_size]
+        
+        embeddings = patch_embeds + self.postition_embeddings(self.position_ids)
+        
+        return embeddings
+        
+                             
 
 
 class SiglipVisionTransformer(nn.Module):
