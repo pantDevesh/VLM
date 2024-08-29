@@ -32,8 +32,26 @@ class SiglipVisionConfig:
         self.layer_norm_eps = layer_norm_eps
         self.attention_dropout_rate = attention_dropout_rate
         self.num_image_tokens = num_image_tokens
+      
+      
+class SiglipEncoderLayer(nn.Module):
+    def __init__(self, config: SiglipVisionConfig):
+        super().__init__()
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
+        self.attn = SiglipAttention(config)
+        self.mlp = SiglipMLP(config)
+        self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
         
-class SigLipEncoder(nn.Module):
+    def forward(self, hidden_states):
+        hidden_states = self.layer_norm1(hidden_states)
+        hidden_states = self.attn(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = self.layer_norm2(hidden_states)
+        return hidden_states
+        
+class SiglipEncoder(nn.Module):
     def __init__(self, config: SiglipVisionConfig):
         super().__init__()
         self.config = config
