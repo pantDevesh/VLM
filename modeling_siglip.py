@@ -34,6 +34,69 @@ class SiglipVisionConfig:
         self.num_image_tokens = num_image_tokens
       
       
+class SiglipAttention(nn.Module):
+    
+    def __init__(self, config: SiglipVisionConfig):
+        super().__init__()
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.num_attention_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_attention_heads
+        self.scale = self.head_dim ** -0.5
+        self.dropout = nn.Dropout(config.attention_dropout_rate)
+        
+        self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.v_proj = nn.Linear(self.embed_dim, self.embed_dim)
+        self.out_proj = nn.Linear(self.embed_dim, self.embed_dim)
+      
+      
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        
+        batch_size, num_patches, embed_dim = hidden_states.size() # [Batch_size, num_patches, hidden_size]
+        q_states = self.q_proj(hidden_states) # [Batch_size, num_patches, hidden_size]
+        k_states = self.k_proj(hidden_states) # [Batch_size, num_patches, hidden_size]
+        v_states = self.v_proj(hidden_states) # [Batch_size, num_patches, hidden_size]
+        
+        q_states = q_states.view(batch_size, num_patches, self.num_attention_heads, self.head_dim).transpose(1, 2) # [Batch_size, num_attention_heads, num_patches, head_dim]
+        k_states = k_states.view(batch_size, num_patches, self.num_attention_heads, self.head_dim).transpose(1, 2) # [Batch_size, num_attention_heads, num_patches, head_dim]
+        v_states = v_states.view(batch_size, num_patches, self.num_attention_heads, self.head_dim).transpose(1, 2) # [Batch_size, num_attention_heads, num_patches, head_dim]
+        
+        attn_weights = torch.matmul(q_states, k_states.transpose(2 ,3)) * self.scale
+                
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(attn_weights.dtype)
+        attn_weights = self.dropout(attn_weights)
+        
+        attn_output = torch.matmul(attn_weights, v_states) # [Batch_size, num_attention_heads, num_patches, head_dim]
+    
+        assert list(attn_output.size()) == [batch_size, self.num_attention_heads, num_patches, num_patches]
+        
+        attn_output = attn_output.transpose(1, 2).contiguous() # [Batch_size, num_patches, num_attention_heads, head_dim] The contiguous method in PyTorch is used to ensure that the tensor is stored in a contiguous chunk of memory. After transposing the tensor, the memory layout might not be contiguous, which can affect performance or compatibility with certain operations. Calling contiguous rearranges the data in memory to be contiguous.
+        attn_output = attn_output.view(batch_size, num_patches, self.embed_dim) # [Batch_size, num_patches, hidden_size]
+
+        attn_output = self.out_proj(attn_output)
+        
+        return attn_output
+       
+    
+    
+class SiglipMLP(nn.Module):
+    
+    def __init__(self, config: SiglipVisionConfig):
+        super().__init__()
+        self.config = config
+        self.embed_dim = config.hidden_size
+        self.fc1 = nn.Linear(self.embed_dim, config.intermediate_size)
+        self.fc2 = nn.Linear(config.intermediate_size, self.embed_dim)
+        self.act = nn.functional.gelu(self.embed_dim, "tanh")
+        
+    def forward(self, hidden_states):
+        hidden_states = self.fc1(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.fc2(hidden_states)
+        return hidden_states
+        
+    
 class SiglipEncoderLayer(nn.Module):
     def __init__(self, config: SiglipVisionConfig):
         super().__init__()
@@ -107,7 +170,7 @@ class SiglipVisionTransformer(nn.Module):
         self.encoder = SigLipEncoder(config)
         self.post_layernorm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
         
-    def forward(self, pixel_values):
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         embeddings = self.embeddings(pixel_values)
         hidden_states = self.encoder(embeddings)
         hidden_states = self.post_layernorm(hidden_states)
